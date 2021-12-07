@@ -1,0 +1,11 @@
+# Build / Project Files
+.idea/
+node_modules/
+dist/
+
+# Sensitive Files
+src/constants.ts
+.secret
+
+# Dust
+.DS_Store

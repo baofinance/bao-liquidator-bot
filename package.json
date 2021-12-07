@@ -1,0 +1,33 @@
+{
+  "name": "bao-liquidator",
+  "version": "1.0.0",
+  "description": "Simple liquidation bot for BAO hardsynths",
+  "main": "indexv2.js",
+  "scripts": {
+    "start": "tsc && node ./dist/indexv2.js",
+    "start-no-build": "node ./dist/indexv2.js"
+  },
+  "keywords": [],
+  "author": "vex",
+  "license": "WTFPL",
+  "dependencies": {
+    "@apollo/client": "^3.4.10",
+    "bignumber.js": "^9.0.1",
+    "chalk": "^4.1.2",
+    "cross-fetch": "^3.1.4",
+    "ethereum-multicall": "^2.8.0",
+    "graphql": "^15.5.3",
+    "inquirer": "^8.1.2",
+    "lodash": "^4.17.21",
+    "prettier": "^2.5.1",
+    "react": "^17.0.2",
+    "tslint": "^6.1.3",
+    "typescript": "^4.4.2",
+    "web3": "^1.5.2"
+  },
+  "prettier": {
+    "trailingComma": "all",
+    "semi": false,
+    "singleQuote": true
+  }
+}
