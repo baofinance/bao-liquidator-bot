@@ -43,6 +43,7 @@ interface AaveLendingPool {
 
 interface Stabilizer {
     function buy(uint amount) external;
+    function sell(uint amount) external;
 }
 
 contract LiquidationController is Ownable {
@@ -113,6 +114,9 @@ contract LiquidationController is Ownable {
             route[1] = address(DAI);
             swapRouter.swapExactTokensForTokens(collateralAmount, 0, route, address(this), block.timestamp);
         }
+
+        // Sell remaining bUSD
+        stabilizer.sell(bUSD.balanceOf(address(this)));
 
         // Repay loan
         DAI.approve(address(aaveLending), type(uint256).max);
