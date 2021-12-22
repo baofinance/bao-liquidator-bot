@@ -45,7 +45,7 @@ import chalk from 'chalk'
 import GraphUtil from './utils/graph'
 import Multicall from './utils/multicall'
 import { Multicall as MC } from 'ethereum-multicall'
-import { decimate } from './utils/numbers'
+import { decimate, exponentiate } from './utils/numbers'
 import { AbiItem } from 'web3-utils'
 
 // ABIs
@@ -53,6 +53,7 @@ import erc20Abi from './abi/erc20.json'
 import cTokenAbi from './abi/ctoken.json'
 import oracleAbi from './abi/marketOracle.json'
 import comptrollerAbi from './abi/comptroller.json'
+import liquidatorAbi from './abi/liquidator.json'
 
 // Initialize Web3 & MultiCall
 const web3 = new Web3(new Web3.providers.HttpProvider(Constants.infuraURI))
@@ -73,6 +74,10 @@ const contracts = {
   oracle: new web3.eth.Contract(
     oracleAbi as AbiItem[],
     Constants.oracleAddress,
+  ),
+  liquidator: new web3.eth.Contract(
+    liquidatorAbi as AbiItem[],
+    Constants.liquidatorContract,
   ),
 }
 
@@ -146,12 +151,12 @@ const runLiquidator = async () => {
   const liquidatableAccounts = accountsLiquidity
     .map((account) => ({
       id: account.ref,
-      liquidatableAmount: new BigNumber(account.values[2].hex),
+      shortfall: new BigNumber(account.values[2].hex),
       accountMarkets: data.accounts.find(
         (_account) => _account.id === account.ref,
       ).tokens,
     }))
-    .filter((isLiquidatable) => isLiquidatable.liquidatableAmount.gt(0))
+    .filter((account) => account.shortfall.gt(0))
 
   logger.info(
     `💸 Found ${chalk.greenBright(
@@ -160,8 +165,9 @@ const runLiquidator = async () => {
   )
 
   // Loop through accounts with a > zero shortfall value
+  const liquidations = []
   for (const accountInfo of liquidatableAccounts) {
-    const { id: account, liquidatableAmount, accountMarkets } = accountInfo
+    const { id: account, shortfall, accountMarkets } = accountInfo
 
     // Keep track of largest borrow position & largest collateral position
     let largestBorrowPosition
@@ -193,7 +199,7 @@ const runLiquidator = async () => {
         const underlyingBalance = new BigNumber(bdBalanceRes[1].values[0].hex)
 
         const _market = data.markets.find(
-          (market) => market.id === bdTokenAddress,
+          (iMarket) => iMarket.id === bdTokenAddress,
         )
         const borrowValue = decimate(
           borrowBalance,
@@ -221,13 +227,18 @@ const runLiquidator = async () => {
           largestCollateralPosition.collateralValue.lt(collateralValue)
         )
           largestCollateralPosition = {
-            bdTokenAddress: bdTokenAddress,
+            bdTokenAddress,
             bdTokenSymbol: bdBalanceRes[2].values[0],
             collateralValue,
+            collateralBalance: underlyingBalance,
           }
       }
     }
 
+    // Only account for bUSD borrows for now
+    if (largestBorrowPosition.bdTokenSymbol !== 'bdUSD') continue
+
+    // TODO- Consider whether or not collateral is enough to cover half of the borrow position
     const liquidationAmount = largestBorrowPosition.borrowBalance
       .times(0.5)
       .minus(1)
@@ -235,7 +246,7 @@ const runLiquidator = async () => {
     console.log('---------------------------------------------------------')
     logger.info(`Liquidating account ${chalk.yellow(account)}...`)
     logger.info(
-      `Account debt: ${chalk.redBright(liquidatableAmount.toNumber())}`,
+      `Account debt (shortfall): ${chalk.redBright(shortfall.toNumber())}`,
     )
     logger.info(
       `Liquidating borrow from ${chalk.magenta(
@@ -268,136 +279,95 @@ const runLiquidator = async () => {
       )}`,
     )
 
-    await new Promise(async (resolve) => {
-      largestBorrowPosition.bdToken.methods
-        .liquidateBorrow(
-          account,
-          liquidationAmount,
-          largestCollateralPosition.bdTokenAddress,
-        )
-        .send({
-          from: Constants.liquidatorWallet,
-          gas: 1000000,
-          gasPrice: await web3.eth.getGasPrice(),
-        })
-        .on('transactionHash', (txHash) =>
-          console.log(chalk.yellowBright(txHash)),
-        )
-        .on('receipt', () => {
-          logger.success(`Liquidated ${chalk.yellow(account)} successfully.`)
-          setTimeout(resolve, 2500) // Wait 2500ms (2.5s) before next loop
-        })
-        .on('error', (error) => {
-          console.log(error)
-          process.exit(1) // exit, for now
-          resolve(error)
-        })
+    liquidations.push({
+      address: account,
+      amount: liquidationAmount,
+      collateral: largestCollateralPosition.bdTokenAddress,
     })
   }
+
+  const addressesToLiquidate = liquidations.map(({ address }) => address)
+  const amountsToLiquidate = liquidations.map(({ amount }) => amount)
+  const collateralTokens = liquidations.map(({ collateral }) => collateral)
+  const totalRepay = liquidations.reduce(
+    (prev: BigNumber, current: any) => current.amount.plus(prev),
+    new BigNumber(0),
+  )
+
+  await new Promise(async (resolve) => {
+    // TODO- Consider gas & profitability of liquidation before execution
+    /* const gasEstimate = await contracts.liquidator.methods.executeLiquidations(
+      addressesToLiquidate,
+      amountsToLiquidate,
+      collateralTokens,
+      totalRepay,
+    ).estimateGas({ from: Constants.liquidatorWallet }) */
+
+    contracts.liquidator.methods
+      .executeLiquidations(
+        addressesToLiquidate,
+        amountsToLiquidate,
+        collateralTokens,
+        totalRepay,
+      )
+      .send({
+        from: Constants.liquidatorWallet,
+        gas: 1000000,
+        gasPrice: await web3.eth.getGasPrice(),
+      })
+      .on('transactionHash', (txHash) =>
+        console.log(`Tx Hash: ${chalk.yellowBright(txHash)}`),
+      )
+      .on('receipt', () => {
+        logger.success(
+          `Liquidated ${chalk.yellow(
+            liquidations.length,
+          )} accounts successfully.`,
+        )
+        setTimeout(resolve, 2500) // Wait 2500ms (2.5s) before next loop
+      })
+      .on('error', (error) => {
+        console.log(error)
+        process.exit(1) // exit, for now
+        resolve(error)
+      })
+  })
   setTimeout(runLiquidator, 60000)
 }
 
-const performApprovals = async () => {
-  logger.info('Fetching markets...')
-  const { markets }: any = await GraphUtil.getUsersAndMarkets()
-  logger.success('Fetched markets from subgraph.')
-
-  const underlyingContracts = markets.reduce(
-    (prev, market) => ({
-      ...prev,
-      [market.id]: new web3.eth.Contract(
-        erc20Abi as AbiItem[],
-        market.underlyingAddress,
-      ),
-    }),
-    {},
-  )
-
-  logger.info(
-    `Fetching token approvals for ${chalk.greenBright(
-      markets.length,
-    )} markets...`,
-  )
-  const approvalQueryMC = Multicall.createCallContext(
-    markets.map(
-      (market) =>
-        market.underlyingAddress !== Constants.genesisAddress && {
-          ref: market.id,
-          contract: underlyingContracts[market.id],
-          calls: [
-            {
-              method: 'allowance',
-              params: [Constants.liquidatorWallet, market.id],
-            },
-          ],
-        },
-    ),
-  )
-  const approvals = Multicall.parseCallResults(
-    await multicall.call(approvalQueryMC),
-  )
-
-  const notApproved = Object.keys(approvals)
-    .map(
-      (tokenAddress) =>
-        !new BigNumber(approvals[tokenAddress][0].values[0].hex).gt(0) &&
-        tokenAddress,
-    )
-    .filter((tokenAddress) => tokenAddress)
-  logger.success(
-    `Your liquidator wallet has approved ${chalk.greenBright(
-      Object.keys(approvals).length - notApproved.length,
-    )}/${chalk.greenBright(
-      Object.keys(approvals).length,
-    )} tokens for spending.`,
-  )
-
-  // Do not prompt if all bdTokens have been approved for spending
-  if (notApproved.length === 0) return mainMenu()
-
+const addCollateralOption = async () => {
   inquirer
     .prompt([
       {
-        type: 'list',
-        name: 'direction',
-        message: 'Would you like to send approval transactions?',
-        choices: ['Yes', 'No'],
+        type: 'input',
+        name: 'address',
+        message: 'Enter Address of Collateral Token',
       },
     ])
-    .then(async ({ direction }) => {
-      if (direction === 'Yes') {
-        for (const tokenAddress of notApproved) {
-          logger.info(
-            `Approving ${underlyingContracts[tokenAddress].options.address} for spending...`,
-          )
-          await new Promise(async (resolve) => {
-            const tokenContract = underlyingContracts[tokenAddress]
-            tokenContract.methods
-              .approve(
-                tokenAddress,
-                new BigNumber(0x1fffffffffffff).times(1e18), // MAX SAFE INT
-              )
-              .send({
-                from: Constants.liquidatorWallet,
-                gas: 1000000,
-                gasPrice: await web3.eth.getGasPrice(),
-              })
-              .on('transactionHash', (txHash) =>
-                logger.info(`Tx Hash: ${txHash}`),
-              )
-              .on('receipt', (receipt) => {
-                logger.success(
-                  `Approved ${tokenContract.options.address} for spending.`,
-                )
-                setTimeout(() => resolve(receipt), 2500)
-              })
-              .on('error', (error) => {
-                console.log(error)
-                process.exit(1) // exit on error, for now
-              })
+    .then(async ({ address }) => {
+      await new Promise(async (resolve) => {
+        contracts.liquidator.methods
+          .addCollateralOption(address)
+          .send({
+            from: Constants.liquidatorWallet,
+            gas: 1000000,
+            gasPrice: await web3.eth.getGasPrice(),
           })
-        }
-      }
+          .on('transactionHash', (txHash) =>
+            console.log(`Tx Hash: ${chalk.yellowBright(txHash)}`),
+          )
+          .on('receipt', () => {
+            logger.success(
+              `Added ${chalk.yellow(address)} as a collateral option.`,
+            )
+            resolve(0)
+          })
+          .on('error', (error) => {
+            console.log(error)
+            process.exit(1) // exit, for now
+            resolve(error)
+          })
+      })
       mainMenu()
     })
 }
@@ -413,7 +383,7 @@ const mainMenu = () => {
         message: 'What would you like to do?',
         choices: [
           'Start Bot',
-          'Check & Perform Approvals',
+          'Add Collateral Option',
           'Get Close Factor & Incentive Mantissa',
           'Exit',
         ],
@@ -424,8 +394,8 @@ const mainMenu = () => {
         case 'Start Bot':
           runLiquidator()
           break
-        case 'Check & Perform Approvals':
-          performApprovals()
+        case 'Add Collateral Option':
+          addCollateralOption()
           break
         case 'Get Close Factor & Incentive Mantissa':
           contracts.comptroller.methods

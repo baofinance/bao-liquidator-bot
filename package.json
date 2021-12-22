@@ -2,10 +2,10 @@
   "name": "bao-liquidator",
   "version": "1.0.0",
   "description": "Simple liquidation bot for BAO hardsynths",
-  "main": "indexv2.js",
+  "main": "indexv3.js",
   "scripts": {
-    "start": "tsc && node ./dist/indexv2.js",
-    "start-no-build": "node ./dist/indexv2.js"
+    "start": "tsc && node ./dist/src/indexv3.js",
+    "start-no-build": "node ./dist/src/indexv3.js"
   },
   "keywords": [],
   "author": "vex",
