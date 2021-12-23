@@ -4,7 +4,6 @@ pragma solidity ^0.8.7;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import { FlashLoanReceiverBase, ILendingPoolAddressesProvider } from "./AaveInterfaces.sol";
 import { bdToken, Stabilizer } from "./BaoInterfaces.sol";
@@ -23,7 +22,6 @@ FlashLoanReceiverBase(ILendingPoolAddressesProvider(0x506B0B2CF20FAA8f38a4E2B524
     bdToken[] public collateral;
 
     using SafeERC20 for IERC20;
-    using SafeMath for uint256;
 
     constructor() {
         bdUSD = bdToken(0x8584B05012749bdd32E41f8c7eB973D2283d1e56);
@@ -45,7 +43,7 @@ FlashLoanReceiverBase(ILendingPoolAddressesProvider(0x506B0B2CF20FAA8f38a4E2B524
 
         // Approve tokens to be taken back by the lending pool
         for (uint i = 0; i < assets.length; i++) {
-            uint amountOwed = amounts[i].add(premiums[i]);
+            uint amountOwed = amounts[i] + premiums[i];
             IERC20(assets[i]).approve(address(LENDING_POOL), amountOwed);
         }
 
