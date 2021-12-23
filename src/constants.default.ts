@@ -6,8 +6,8 @@ export default {
   liquidatorWallet: '<wallet-address>',
   liquidatorContract: '<liquidator-contract>',
   genesisAddress: '0x0000000000000000000000000000000000000000',
-  //Min gas cost of liquidating an account (in Ether)
-  liquidationGasCost: new BigNumber(0.00084943877),
+  //Min gas cost of liquidating an account (in wei)
+  liquidationGasCost: new BigNumber(849438770000000),
   // Infura URI
   infuraURI: '<infura-uri>',
 
