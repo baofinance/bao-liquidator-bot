@@ -148,6 +148,9 @@ const runLiquidator = async () => {
   )
   logger.success('Gathered accounts liquidity from comptroller.')
 
+  const liquidationCost = underlyingPricesUSD[Constants.bdEthAddress].times(Constants.liquidationGasCost);
+  logger.info(`Gas cost per liquidation: ${chalk.green(liquidationCost.toString())}`)
+
   const liquidatableAccounts = accountsLiquidity
     .map((account) => ({
       id: account.ref,
@@ -156,7 +159,7 @@ const runLiquidator = async () => {
         (_account) => _account.id === account.ref,
       ).tokens,
     }))
-    .filter((account) => account.shortfall.gt(0))
+    .filter((account) => account.shortfall.gt(liquidationCost))//Assuming each user only requires 1 liquidation
 
   logger.info(
     `💸 Found ${chalk.greenBright(
