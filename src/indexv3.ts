@@ -249,7 +249,7 @@ const runLiquidator = async () => {
       liquidationAmount = halfBorrowPosition;
     }
     else{
-      //We liquidate the entirety largest collateral position
+      //We liquidate the entire largest collateral position
       liquidationAmount = reducableCollateralValue;
     }
     
