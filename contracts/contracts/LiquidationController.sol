@@ -5,13 +5,13 @@ pragma solidity ^0.8.7;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import { FlashLoanReceiverBase, ILendingPoolAddressesProvider } from "./AaveInterfaces.sol";
+import { FlashLoanReceiverBase, ILendingPoolAddressesProvider } from "./AaveV1Interfaces.sol";
 import { bdToken, Stabilizer } from "./BaoInterfaces.sol";
 import { IUniswapV2Router02 } from "./UniswapInterfaces.sol";
 
 contract LiquidationController is
 Ownable,
-FlashLoanReceiverBase(ILendingPoolAddressesProvider(0x506B0B2CF20FAA8f38a4E2B524EE43e1f4458Cc5))
+FlashLoanReceiverBase(0x506B0B2CF20FAA8f38a4E2B524EE43e1f4458Cc5)
 {
     bdToken immutable bdUSD;
     IERC20 immutable DAI;
@@ -19,69 +19,36 @@ FlashLoanReceiverBase(ILendingPoolAddressesProvider(0x506B0B2CF20FAA8f38a4E2B524
     Stabilizer immutable stabilizer;
     IUniswapV2Router02 immutable swapRouter;
 
-    bdToken[] public collateral;
-
     using SafeERC20 for IERC20;
 
     constructor() {
         bdUSD = bdToken(0x8584B05012749bdd32E41f8c7eB973D2283d1e56);
         DAI = IERC20(0xf80A32A835F79D7787E8a8ee5721D0fEaFd78108);
         bUSD = IERC20(0xDF559301C178221E8D76E4A91126C504Dfe5947a);
-        stabilizer = Stabilizer(0xD15C57FE113C6276FAD2F82658BB420351147f5E);
+        stabilizer = Stabilizer(0xf867C6C7C0eFAD233fA3bdD7eaC62C61F3FD00Cd);
         swapRouter = IUniswapV2Router02(0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506); // SUSHI Router on Ropsten
     }
 
     // This function is called after the contract has received the flash loaned amount
     function executeOperation(
-        address[] calldata assets,
-        uint256[] calldata amounts,
-        uint256[] calldata premiums,
-        address initiator,
-        bytes calldata params
-    ) external override returns (bool) {
-        // Liquidation logic, contract has funds
+        address _reserve,
+        uint256 _amount, 
+        uint256 _fee, 
+        bytes calldata _params
+    ) external override{
 
-        // Approve tokens to be taken back by the lending pool
-        for (uint i = 0; i < assets.length; i++) {
-            uint amountOwed = amounts[i] + premiums[i];
-            IERC20(assets[i]).approve(address(LENDING_POOL), amountOwed);
-        }
-
-        return true;
-    }
-
-    /**
-      * @notice Method to liquidate users given an address, amount and asset.
-      * @param _borrowers The addresses whose borrow we are going to repay (liquidations)
-      * @param _repayAmounts The number of borrowed assets we want to repay
-      * @param _bdCollaterals The bdToken address of the collateral we want to claim
-      * @param _totalRepayAmount The total amount of the synth assets that we plan to repay the user debts with
-      */
-    function executeLiquidations(
-        address[] memory _borrowers,
-        uint256[] memory _repayAmounts,
-        address[] memory _bdCollaterals,
-        uint256 _totalRepayAmount
-    ) external {
-        // Get a flash loan for DAI
-        address[] memory assets = new address[](1);
-        assets[0] = address(DAI);
-        uint256[] memory amounts = new uint256[](1);
-        amounts[0] = _totalRepayAmount;
-        uint256[] memory modes = new uint256[](1);
-        modes[0] = 0;
-        LENDING_POOL.flashLoan(address(this), assets, amounts, modes, address(this), "", 0);
-
-        // TODO- Move logic - https://docs.aave.com/developers/guides/flash-loans#2.-calling-flashloan
+        (address[] memory _borrowers, uint256[] memory _repayAmounts, address[] memory _bdCollaterals) = abi.decode(_params, (address[], uint256[], address[]));
+        
+        //Possible gas saving measure: Max approvals for bdUSD and stabilizer so don't need to call them each time
 
         // Approve transfer of DAI to stabilizer
-        DAI.approve(address(stabilizer), _totalRepayAmount);
+        DAI.approve(address(stabilizer), _amount);
 
         // Exchange for bUSD on Stabilizer
-        stabilizer.buy(_totalRepayAmount);
+        stabilizer.buy(_amount);
 
         // Approve bUSD transfers for liquidations
-        bUSD.approve(address(bdUSD), _totalRepayAmount);
+        bUSD.approve(address(bdUSD), _amount);
 
         // Liquidate the different users
         for (uint i = 0; i < _borrowers.length; i++) {
@@ -98,6 +65,7 @@ FlashLoanReceiverBase(ILendingPoolAddressesProvider(0x506B0B2CF20FAA8f38a4E2B524
             uint collateralAmount = IERC20(underlyingCollateral).balanceOf(address(this));
 
             // Exchange Collateral for DAI
+            // ToDo: if ETH, other logic
             IERC20(underlyingCollateral).approve(address(swapRouter), collateralAmount);
             address[] memory route = new address[](2);
             route[0] = address(underlyingCollateral);
@@ -107,18 +75,29 @@ FlashLoanReceiverBase(ILendingPoolAddressesProvider(0x506B0B2CF20FAA8f38a4E2B524
 
         // Sell remaining bUSD
         stabilizer.sell(bUSD.balanceOf(address(this)));
+
+        //Repay Loan
+        uint totalDebt = _amount + _fee;
+        transferFundsBackToPoolInternal(payable(address(DAI)), totalDebt);
     }
 
-    function addCollateralOption(address _newCollateral) external onlyOwner {
-        require(_newCollateral != address(0));
-        collateral.push(bdToken(_newCollateral));
-    }
+    /**
+      * @notice Method to liquidate users given an address, amount and asset.
+      * @param _borrowers The addresses whose borrow we are going to repay (liquidations)
+      * @param _repayAmounts The number of borrowed assets we want to repay
+      * @param _bdCollaterals The bdToken address of the collateral we want to claim
+      * @param _totalRepayAmount The total amount of the synth assets that we plan to repay the user debts with
+      */
+    function executeLiquidations(
+        address[] memory _borrowers,
+        uint256[] memory _repayAmounts,
+        address[] memory _bdCollaterals,
+        uint256 _totalRepayAmount
+    ) external {
 
-    function removeCollateralOption(uint index) external onlyOwner {
-        require(index < collateral.length);
-        require(address(collateral[index]) != address(0));
-        collateral[index] = collateral[collateral.length - 1];
-        collateral.pop();
+        bytes memory params = abi.encode(_borrowers,_repayAmounts,_bdCollaterals);
+                                                            //We need to lend more for the stabilizer fee
+        LENDING_POOL.flashLoan(address(this), address(DAI), (_totalRepayAmount * 1e18 / 99e16), params);
     }
 
     function retrieve(address token, uint256 amount) external onlyOwner {
