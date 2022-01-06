@@ -7,26 +7,29 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import { FlashLoanReceiverBase, ILendingPoolAddressesProvider } from "./AaveV1Interfaces.sol";
 import { bdToken, Stabilizer } from "./BaoInterfaces.sol";
-import { IUniswapV2Router02 } from "./UniswapInterfaces.sol";
+import { ISwapRouter } from "./UniswapInterfaces.sol";
+import { IWETH9 } from "./WethInterface.sol";
 
 contract LiquidationController is
 Ownable,
 FlashLoanReceiverBase(0x506B0B2CF20FAA8f38a4E2B524EE43e1f4458Cc5)
 {
-    bdToken immutable bdUSD;
-    IERC20 immutable DAI;
-    IERC20 immutable bUSD;
-    Stabilizer immutable stabilizer;
-    IUniswapV2Router02 immutable swapRouter;
+    bdToken constant bdUSD = bdToken(0x63793577FC659243Df8fF731089FBe60d2A36A0d);
+    bdToken constant bdETH = bdToken(0x895952c8290bf311B4848dE954F1A747Bf97809f);
+    IWETH9 constant WETH = IWETH9(payable(0xc778417E063141139Fce010982780140Aa0cD5Ab));
+    IERC20 constant DAI = IERC20(0xf80A32A835F79D7787E8a8ee5721D0fEaFd78108);
+    IERC20 constant bUSD = IERC20(0x0F051F3C818b495ef27AC46462188295F83469A5);
+    Stabilizer constant stabilizer = Stabilizer(0x842Cc92850A7BFCC3e539797d109c13eD661037E);
+    ISwapRouter constant swapRouter = ISwapRouter(0xE592427A0AEce92De3Edee1F18E0157C05861564); // UniV3 Router
+    address constant public Treasury = 0xC189Ca9C9168004B3c0eED5409c15A88B87a0702;
+
+    mapping(address => uint24) poolFee;
 
     using SafeERC20 for IERC20;
 
-    constructor() {
-        bdUSD = bdToken(0x8584B05012749bdd32E41f8c7eB973D2283d1e56);
-        DAI = IERC20(0xf80A32A835F79D7787E8a8ee5721D0fEaFd78108);
-        bUSD = IERC20(0xDF559301C178221E8D76E4A91126C504Dfe5947a);
-        stabilizer = Stabilizer(0xf867C6C7C0eFAD233fA3bdD7eaC62C61F3FD00Cd);
-        swapRouter = IUniswapV2Router02(0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506); // SUSHI Router on Ropsten
+    constructor(){
+        poolFee[0xfA3545f9Cca55088B30223bc86BE1AEe0F86eE62] = 500; //USDC-DAI
+        poolFee[address(bdETH)] = 3000; //Eth-DAI
     }
 
     // This function is called after the contract has received the flash loaned amount
@@ -38,8 +41,6 @@ FlashLoanReceiverBase(0x506B0B2CF20FAA8f38a4E2B524EE43e1f4458Cc5)
     ) external override{
 
         (address[] memory _borrowers, uint256[] memory _repayAmounts, address[] memory _bdCollaterals) = abi.decode(_params, (address[], uint256[], address[]));
-        
-        //Possible gas saving measure: Max approvals for bdUSD and stabilizer so don't need to call them each time
 
         // Approve transfer of DAI to stabilizer
         DAI.approve(address(stabilizer), _amount);
@@ -52,33 +53,86 @@ FlashLoanReceiverBase(0x506B0B2CF20FAA8f38a4E2B524EE43e1f4458Cc5)
 
         // Liquidate the different users
         for (uint i = 0; i < _borrowers.length; i++) {
-            bdUSD.liquidateBorrow(_borrowers[i], _repayAmounts[i], _bdCollaterals[i]);
+            (uint result) = bdUSD.liquidateBorrow(_borrowers[i], _repayAmounts[i], _bdCollaterals[i]);
+            //If liquidation didn't succeed we need to sell the bUSD again.
+            //If the incurred fees are too high we won't be able to repay the Flashloan fee and the transaction will revert
+            if(result!=0){
+                bUSD.approve(address(stabilizer), _repayAmounts[i]);
+                stabilizer.sell(_repayAmounts[i]);
+            }
         }
 
-        // Redeem all seized Collateral
+        // Redeem and sell all seized Collateral
         for (uint j = 0; j < _bdCollaterals.length; j++) {
-            // ToDo: use balanceOfUnderlying by calculating with exchange rate so that we don't have to read balanceOf() again later
             bdToken bdCollateral = bdToken(_bdCollaterals[j]);
-            bdCollateral.redeem(bdCollateral.balanceOf(address(this)));
+            uint collateralBalance = bdCollateral.balanceOf(address(this));
+            
+            //If liquidation failed we might not have any collateral to redeem 
+            if(collateralBalance == 0 && address(this).balance == 0){
+                continue;
+            }
 
+            bdCollateral.redeem(collateralBalance);
+
+            //Get amount of seized assets
             address underlyingCollateral = bdCollateral.underlying();
-            uint collateralAmount = IERC20(underlyingCollateral).balanceOf(address(this));
 
-            // Exchange Collateral for DAI
-            // ToDo: if ETH, other logic
-            IERC20(underlyingCollateral).approve(address(swapRouter), collateralAmount);
-            address[] memory route = new address[](2);
-            route[0] = address(underlyingCollateral);
-            route[1] = address(DAI);
-            swapRouter.swapExactTokensForTokens(collateralAmount, 0, route, address(this), block.timestamp);
+            ISwapRouter.ExactInputSingleParams memory params;
+
+            //If we are handling eth -> transform to weth before selling
+            if(underlyingCollateral == address(0)){
+
+                uint collateralAmount = address(this).balance;
+
+                //ETH to WETH
+                WETH.deposit{value: collateralAmount}();
+
+                WETH.approve(address(swapRouter), collateralAmount);
+
+                //Define Swap Params
+                params =
+                ISwapRouter.ExactInputSingleParams({
+                    tokenIn: address(WETH),
+                    tokenOut: address(DAI),
+                    fee: poolFee[_bdCollaterals[j]],
+                    recipient: address(this),
+                    deadline: block.timestamp,
+                    amountIn: collateralAmount,
+                    amountOutMinimum: 0,
+                    sqrtPriceLimitX96: 0
+                });
+                            
+            }
+            //Swapping any other ERC20 type for DAI
+            else{
+                uint collateralAmount = IERC20(underlyingCollateral).balanceOf(address(this));
+
+                IERC20(underlyingCollateral).approve(address(swapRouter), collateralAmount);
+
+                //Define Swap Params
+                params =
+                ISwapRouter.ExactInputSingleParams({
+                    tokenIn: underlyingCollateral,
+                    tokenOut: address(DAI),
+                    fee: poolFee[_bdCollaterals[j]],
+                    recipient: address(this),
+                    deadline: block.timestamp,
+                    amountIn: collateralAmount,
+                    amountOutMinimum: 0,
+                    sqrtPriceLimitX96: 0
+                });
+            }
+
+            //Execute Swap
+            swapRouter.exactInputSingle(params);
         }
-
-        // Sell remaining bUSD
-        stabilizer.sell(bUSD.balanceOf(address(this)));
 
         //Repay Loan
         uint totalDebt = _amount + _fee;
         transferFundsBackToPoolInternal(payable(address(DAI)), totalDebt);
+
+        //Transfer funds to treasury (to avoid greefing attack)
+        DAI.transfer(Treasury, DAI.balanceOf(address(this)));
     }
 
     /**
@@ -104,6 +158,4 @@ FlashLoanReceiverBase(0x506B0B2CF20FAA8f38a4E2B524EE43e1f4458Cc5)
         IERC20 tokenContract = IERC20(token);
         tokenContract.safeTransfer(msg.sender, amount);
     }
-
-    // ToDo: Function to remove any assets that might remain from liquidations
 }

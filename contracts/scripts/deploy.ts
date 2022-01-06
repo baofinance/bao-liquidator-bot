@@ -1,9 +1,7 @@
 import { ethers } from 'hardhat'
 
 async function main() {
-  const LiquidationController = await ethers.getContractFactory(
-    'LiquidationController',
-  )
+  const LiquidationController = await ethers.getContractFactory("LiquidationController")
   const liqController = await LiquidationController.deploy()
 
   await liqController.deployed()
