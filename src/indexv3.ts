@@ -238,11 +238,21 @@ const runLiquidator = async () => {
     // Only account for bUSD borrows for now
     if (largestBorrowPosition.bdTokenSymbol !== 'bdUSD') continue
 
-    // TODO- Consider whether or not collateral is enough to cover half of the borrow position
-    const liquidationAmount = largestBorrowPosition.borrowBalance
-      .times(0.5)
-      .minus(1)
-      .decimalPlaces(0)
+    let liquidationAmount;
+    //Liquidator takes 10% as a reward
+    let reducableCollateralValue = largestCollateralPosition.divided(1.1).minus(1).decimalPlaces(0);
+    //We can only liquidate half of the borrowed position
+    let halfBorrowPosition = largestBorrowPosition.times(0.5).minus(1).decimalPlaces(0);
+
+    if(halfBorrowPosition <= reducableCollateralValue){
+      //We always liquidate half of the position, even if the debt would be cleared with a smaller liquidation
+      liquidationAmount = halfBorrowPosition;
+    }
+    else{
+      //We liquidate the entire largest collateral position
+      liquidationAmount = reducableCollateralValue;
+    }
+    
     console.log('---------------------------------------------------------')
     logger.info(`Liquidating account ${chalk.yellow(account)}...`)
     logger.info(
