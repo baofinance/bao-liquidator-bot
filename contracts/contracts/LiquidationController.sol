@@ -25,6 +25,9 @@ FlashLoanReceiverBase(0x506B0B2CF20FAA8f38a4E2B524EE43e1f4458Cc5)
 
     mapping(address => uint24) poolFee;
 
+    //ONLY FOR ROPSTEN TESTING
+    uint public lastEthSale;
+
     using SafeERC20 for IERC20;
 
     constructor(){
@@ -51,6 +54,9 @@ FlashLoanReceiverBase(0x506B0B2CF20FAA8f38a4E2B524EE43e1f4458Cc5)
         // Approve bUSD transfers for liquidations
         bUSD.approve(address(bdUSD), _amount);
 
+        //ONLY FOR ROPSTEN TESTING
+        lastEthSale = 0;
+
         // Liquidate the different users
         for (uint i = 0; i < _borrowers.length; i++) {
             (uint result) = bdUSD.liquidateBorrow(_borrowers[i], _repayAmounts[i], _bdCollaterals[i]);
@@ -74,15 +80,15 @@ FlashLoanReceiverBase(0x506B0B2CF20FAA8f38a4E2B524EE43e1f4458Cc5)
 
             bdCollateral.redeem(collateralBalance);
 
-            //Get amount of seized assets
-            address underlyingCollateral = bdCollateral.underlying();
-
             ISwapRouter.ExactInputSingleParams memory params;
 
             //If we are handling eth -> transform to weth before selling
-            if(underlyingCollateral == address(0)){
+            if(0 < address(this).balance){
 
                 uint collateralAmount = address(this).balance;
+
+                //Only for Ropsten testing
+                lastEthSale += collateralAmount;
 
                 //ETH to WETH
                 WETH.deposit{value: collateralAmount}();
@@ -105,6 +111,8 @@ FlashLoanReceiverBase(0x506B0B2CF20FAA8f38a4E2B524EE43e1f4458Cc5)
             }
             //Swapping any other ERC20 type for DAI
             else{
+                //Get amount of seized assets
+                address underlyingCollateral = bdCollateral.underlying();
                 uint collateralAmount = IERC20(underlyingCollateral).balanceOf(address(this));
 
                 IERC20(underlyingCollateral).approve(address(swapRouter), collateralAmount);
@@ -126,6 +134,8 @@ FlashLoanReceiverBase(0x506B0B2CF20FAA8f38a4E2B524EE43e1f4458Cc5)
             //Execute Swap
             swapRouter.exactInputSingle(params);
         }
+
+        uint currentDaiBalance = DAI.balanceOf(address(this));
 
         //Repay Loan
         uint totalDebt = _amount + _fee;
