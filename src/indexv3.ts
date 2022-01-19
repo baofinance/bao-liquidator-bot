@@ -164,6 +164,8 @@ const runLiquidator = async () => {
     )} account(s) flagged for liquidation 💸`,
   )
 
+  if (liquidatableAccounts.length === 0) return setTimeout(runLiquidator, 60000)
+
   // Loop through accounts with a > zero shortfall value
   const liquidations = []
   for (const accountInfo of liquidatableAccounts) {
@@ -238,21 +240,37 @@ const runLiquidator = async () => {
     // Only account for bUSD borrows for now
     if (largestBorrowPosition.bdTokenSymbol !== 'bdUSD') continue
 
-    let liquidationAmount;
-    //Liquidator takes 10% as a reward
-    let reducableCollateralValue = largestCollateralPosition.divided(1.1).minus(1).decimalPlaces(0);
-    //We can only liquidate half of the borrowed position
-    let halfBorrowPosition = largestBorrowPosition.times(0.5).minus(1).decimalPlaces(0);
+    // Liquidator takes 10% as a reward
+    const reducableCollateralValue = largestCollateralPosition.collateralValue
+      .div(1.1)
+      .minus(1)
+      .decimalPlaces(0)
+    // We can only liquidate half of the borrowed position
+    const halfBorrowPosition = largestBorrowPosition.borrowValue
+      .times(0.5)
+      .minus(1)
+      .decimalPlaces(0)
 
-    if(halfBorrowPosition <= reducableCollateralValue){
-      //We always liquidate half of the position, even if the debt would be cleared with a smaller liquidation
-      liquidationAmount = halfBorrowPosition;
-    }
-    else{
-      //We liquidate the entire largest collateral position
-      liquidationAmount = reducableCollateralValue;
-    }
-    
+    // Check whether or not half of the user's borrowed
+    // tokens is more than the collateral they have supplied
+    const liquidationAmount =
+      halfBorrowPosition <= reducableCollateralValue
+        ? // Use half of borrow balance
+          largestBorrowPosition.borrowBalance
+            .times(0.5)
+            .minus(1)
+            .decimalPlaces(0)
+        : // Use collateral position's value for repayment
+          largestCollateralPosition.collateralBalance
+            .div(1.1)
+            .minus(1)
+            .decimalPlaces(0)
+            .times( // Convert to equivalent balance in borrowed token using exchange rate
+              underlyingPricesUSD[largestCollateralPosition.bdTokenAddress] /
+                underlyingPricesUSD[largestBorrowPosition.bdTokenAddress],
+            )
+            .decimalPlaces(0)
+
     console.log('---------------------------------------------------------')
     logger.info(`Liquidating account ${chalk.yellow(account)}...`)
     logger.info(
@@ -306,12 +324,31 @@ const runLiquidator = async () => {
 
   await new Promise(async (resolve) => {
     // TODO- Consider gas & profitability of liquidation before execution
-    /* const gasEstimate = await contracts.liquidator.methods.executeLiquidations(
-      addressesToLiquidate,
-      amountsToLiquidate,
-      collateralTokens,
-      totalRepay,
-    ).estimateGas({ from: Constants.liquidatorWallet }) */
+    // TODO- GAS * GAS_PRICE must be <= EXPECTED_PROFIT (in ETH) in order for tx to be sent
+    const gasPrice = new BigNumber(await web3.eth.getGasPrice())
+      .times(1.25) // Probably a good idea to use a higher gas price than normal for faster tx throughput
+      .decimalPlaces(0)
+      .toString()
+    const gasPriceEther = web3.utils.fromWei(gasPrice, 'ether')
+    const gasEstimate = await contracts.liquidator.methods
+      .executeLiquidations(
+        addressesToLiquidate,
+        amountsToLiquidate,
+        collateralTokens,
+        totalRepay,
+      )
+      .estimateGas({ from: Constants.liquidatorWallet, gasPrice })
+    const estTxFeeETH = new BigNumber(gasPriceEther).times(gasEstimate)
+    const estTxFeeUSD = new BigNumber(
+      underlyingPricesUSD[Constants.bdEthAddress.toLowerCase()],
+    ).times(estTxFeeETH)
+    // --Debug Logs--
+    console.log(
+      `Estimated Gas Usage: ${chalk.cyan(gasEstimate)} GWEI\n`,
+      `Gas Price: ${chalk.cyan(web3.utils.fromWei(gasPrice, 'gwei'))} GWEI\n`,
+      `Estimated Tx Fee (ETH): ${chalk.yellow(estTxFeeETH)}\n`,
+      `Estimated Tx Fee (USD): $${chalk.yellow(estTxFeeUSD.toFixed(2))}`,
+    )
 
     contracts.liquidator.methods
       .executeLiquidations(
@@ -322,8 +359,8 @@ const runLiquidator = async () => {
       )
       .send({
         from: Constants.liquidatorWallet,
-        gas: 1000000,
-        gasPrice: await web3.eth.getGasPrice(),
+        gas: gasEstimate,
+        gasPrice,
       })
       .on('transactionHash', (txHash) =>
         console.log(`Tx Hash: ${chalk.yellowBright(txHash)}`),
