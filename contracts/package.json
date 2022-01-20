@@ -1,6 +1,11 @@
 {
   "name": "liquidator-contracts",
   "private": true,
+  "scripts": {
+    "compile": "npx hardhat compile",
+    "deploy-ropsten": "npx hardhat run --network ropsten scripts/deploy.ts",
+    "test": "npx hardhat test"
+  },
   "devDependencies": {
     "@nomiclabs/hardhat-ethers": "^2.0.3",
     "@nomiclabs/hardhat-etherscan": "^2.1.8",

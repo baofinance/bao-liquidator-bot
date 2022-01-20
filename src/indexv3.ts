@@ -137,15 +137,24 @@ const runLiquidator = async () => {
         params: [account.id],
       })),
     },
+    {
+      ref: 'LiqMantissa',
+      contract: comptroller,
+      calls: [
+        {
+          method: 'liquidationIncentiveMantissa',
+          params: [],
+        },
+      ],
+    },
   ])
   logger.info(
     `Querying comptroller for ${chalk.greenBright(
       data.accounts.length,
     )} accounts...`,
   )
-  const { Comptroller: accountsLiquidity } = Multicall.parseCallResults(
-    await multicall.call(accountsLiquidityQueryMC),
-  )
+  const { Comptroller: accountsLiquidity, LiqMantissa: liqMantissa } =
+    Multicall.parseCallResults(await multicall.call(accountsLiquidityQueryMC))
   logger.success('Gathered accounts liquidity from comptroller.')
 
   const liquidatableAccounts = accountsLiquidity
@@ -157,6 +166,7 @@ const runLiquidator = async () => {
       ).tokens,
     }))
     .filter((account) => account.shortfall.gt(0))
+  const liquidationIncentive = decimate(liqMantissa[0].values[0].hex)
 
   logger.info(
     `💸 Found ${chalk.greenBright(
@@ -262,10 +272,11 @@ const runLiquidator = async () => {
             .decimalPlaces(0)
         : // Use collateral position's value for repayment
           largestCollateralPosition.collateralBalance
-            .div(1.1)
+            .div(liquidationIncentive)
             .minus(1)
             .decimalPlaces(0)
-            .times( // Convert to equivalent balance in borrowed token using exchange rate
+            .times(
+              // Convert to equivalent balance in borrowed token using exchange rate
               underlyingPricesUSD[largestCollateralPosition.bdTokenAddress] /
                 underlyingPricesUSD[largestBorrowPosition.bdTokenAddress],
             )
@@ -303,7 +314,12 @@ const runLiquidator = async () => {
       )} ${chalk.magenta(
         largestBorrowPosition.bdTokenSymbol,
       )} - $${chalk.greenBright(
-        largestBorrowPosition.borrowValue.times(0.5).toFixed(2),
+        decimate(
+          liquidationAmount,
+          largestBorrowPosition.market.underlyingDecimals,
+        )
+          .times(underlyingPricesUSD[largestBorrowPosition.bdTokenAddress])
+          .toNumber(),
       )}`,
     )
 
@@ -323,8 +339,6 @@ const runLiquidator = async () => {
   )
 
   await new Promise(async (resolve) => {
-    // TODO- Consider gas & profitability of liquidation before execution
-    // TODO- GAS * GAS_PRICE must be <= EXPECTED_PROFIT (in ETH) in order for tx to be sent
     const gasPrice = new BigNumber(await web3.eth.getGasPrice())
       .times(1.25) // Probably a good idea to use a higher gas price than normal for faster tx throughput
       .decimalPlaces(0)
@@ -342,13 +356,27 @@ const runLiquidator = async () => {
     const estTxFeeUSD = new BigNumber(
       underlyingPricesUSD[Constants.bdEthAddress.toLowerCase()],
     ).times(estTxFeeETH)
-    // --Debug Logs--
-    console.log(
-      `Estimated Gas Usage: ${chalk.cyan(gasEstimate)} GWEI\n`,
-      `Gas Price: ${chalk.cyan(web3.utils.fromWei(gasPrice, 'gwei'))} GWEI\n`,
-      `Estimated Tx Fee (ETH): ${chalk.yellow(estTxFeeETH)}\n`,
-      `Estimated Tx Fee (USD): $${chalk.yellow(estTxFeeUSD.toFixed(2))}`,
+    // TODO: I'm not sure if this is the correct way to get a rough estimate of profit, need to check on this
+    const estimatedProfit = decimate(
+      totalRepay.times(liquidationIncentive).minus(totalRepay),
     )
+    // --Debug Logs--
+    logger.debug(`Estimated Gas Usage: ${chalk.cyan(gasEstimate)} GWEI`)
+    logger.debug(`Gas Price: ${chalk.cyan(web3.utils.fromWei(gasPrice, 'gwei'))} GWEI`)
+    logger.debug(`Estimated Tx Fee (ETH): ${chalk.yellow(estTxFeeETH)}`)
+    logger.debug(`Estimated Tx Fee (USD): $${chalk.yellow(estTxFeeUSD.toFixed(2))}`)
+
+    if (estimatedProfit.lt(estTxFeeUSD)) {
+      logger.warning(
+        `Estimated profit ($${chalk.yellow(
+          estimatedProfit.toFixed(2),
+        )}) is less than estimated tx fee ($${chalk.yellow(
+          estTxFeeUSD.toFixed(2),
+        )}). Not performing liquidation.`,
+      )
+
+      return resolve('Profit < gas fee')
+    }
 
     contracts.liquidator.methods
       .executeLiquidations(
