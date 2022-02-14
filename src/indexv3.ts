@@ -267,7 +267,7 @@ const runLiquidator = async () => {
     // Check whether or not half of the user's borrowed
     // tokens is more than the collateral they have supplied
     const liquidationAmount =
-      halfBorrowPosition <= reducableCollateralValue
+      Number(halfBorrowPosition) <= Number(reducableCollateralValue)
         ? // Use half of borrow balance
           largestBorrowPosition.borrowBalance
             .times(0.5)
