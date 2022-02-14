@@ -791,6 +791,23 @@
     "stateMutability": "nonpayable",
     "type": "function"
   },
+
+  {
+    "constant": false,
+    "inputs": [],
+    "name": "protocolSeizeShareMantissa",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "payable": false,
+    "stateMutability": "view",
+    "type": "function"
+  },
+
   {
     "constant": false,
     "inputs": [
