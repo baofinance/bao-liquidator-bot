@@ -200,6 +200,7 @@ const runLiquidator = async () => {
               { method: 'borrowBalanceCurrent', params: [account] },
               { method: 'balanceOfUnderlying', params: [account] },
               { method: 'symbol' },
+              { method: 'protocolSeizeShareMantissa' },
             ],
           },
         ])
@@ -209,6 +210,7 @@ const runLiquidator = async () => {
 
         const borrowBalance = new BigNumber(bdBalanceRes[0].values[0].hex)
         const underlyingBalance = new BigNumber(bdBalanceRes[1].values[0].hex)
+        const protocolSeizeShare = decimate(bdBalanceRes[3].values[0].hex)
 
         const _market = data.markets.find(
           (iMarket) => iMarket.id === bdTokenAddress,
@@ -241,6 +243,7 @@ const runLiquidator = async () => {
           largestCollateralPosition = {
             bdTokenAddress,
             bdTokenSymbol: bdBalanceRes[2].values[0],
+            bdTokenProtocolSeizeShare: protocolSeizeShare,
             collateralValue,
             collateralBalance: underlyingBalance,
           }
@@ -264,7 +267,7 @@ const runLiquidator = async () => {
     // Check whether or not half of the user's borrowed
     // tokens is more than the collateral they have supplied
     const liquidationAmount =
-      halfBorrowPosition <= reducableCollateralValue
+      Number(halfBorrowPosition) <= Number(reducableCollateralValue)
         ? // Use half of borrow balance
           largestBorrowPosition.borrowBalance
             .times(0.5)
@@ -326,6 +329,7 @@ const runLiquidator = async () => {
     liquidations.push({
       address: account,
       amount: liquidationAmount,
+      protocolSeizeShare: largestCollateralPosition.bdTokenProtocolSeizeShare,
       collateral: largestCollateralPosition.bdTokenAddress,
     })
   }
@@ -333,8 +337,9 @@ const runLiquidator = async () => {
   const addressesToLiquidate = liquidations.map(({ address }) => address)
   const amountsToLiquidate = liquidations.map(({ amount }) => amount)
   const collateralTokens = liquidations.map(({ collateral }) => collateral)
+  const protocolSeizeShare = liquidations.map(({ protocolSeizeShare }) => protocolSeizeShare)
   const totalRepay = liquidations.reduce(
-    (prev: BigNumber, current: any) => current.amount.plus(prev),
+    (prev: BigNumber, current: any) => current.amount.times(1.01).decimalPlaces(0).plus(prev),
     new BigNumber(0),
   )
 
@@ -352,13 +357,15 @@ const runLiquidator = async () => {
         totalRepay,
       )
       .estimateGas({ from: Constants.liquidatorWallet, gasPrice })
+      
     const estTxFeeETH = new BigNumber(gasPriceEther).times(gasEstimate)
     const estTxFeeUSD = new BigNumber(
       underlyingPricesUSD[Constants.bdEthAddress.toLowerCase()],
     ).times(estTxFeeETH)
+    
     // TODO: I'm not sure if this is the correct way to get a rough estimate of profit, need to check on this
     const estimatedProfit = decimate(
-      totalRepay.times(liquidationIncentive).minus(totalRepay),
+      totalRepay.div(1.01).times(liquidationIncentive.minus(protocolSeizeShare[0])).minus(decimate(totalRepay).times(0.009)).minus(totalRepay),
     )
     // --Debug Logs--
     logger.debug(`Estimated Gas Usage: ${chalk.cyan(gasEstimate)} GWEI`)
@@ -504,3 +511,4 @@ const mainMenu = () => {
 }
 
 mainMenu()
+        
