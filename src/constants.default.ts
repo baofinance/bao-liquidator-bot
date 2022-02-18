@@ -4,6 +4,8 @@ export default {
   liquidatorWallet: '<wallet-address>',
   liquidatorContract: '<liquidator-contract>',
   genesisAddress: '0x0000000000000000000000000000000000000000',
+  bdEthAddress: '0xF635fdF9B36b557bD281aa02fdfaeBEc04CD084A',
+  signerKey: '<private-key-SIGNER>', //Does not hold any funds
 
   // Infura URI
   infuraURI: '<infura-uri>',
@@ -12,6 +14,6 @@ export default {
   SUBGRAPH_URLS: {
     ropsten:
       'https://api.thegraph.com/subgraphs/name/totalpizza/dev-hard-synths',
-    mainnet: '-',
+    mainnet: 'https://api.thegraph.com/subgraphs/name/baofinance/bao-markets',
   },
 }
