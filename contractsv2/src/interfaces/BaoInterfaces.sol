@@ -9,6 +9,8 @@ abstract contract bdToken is ERC20 {
 
     function redeem(uint redeemTokens) virtual external returns (uint);
     function liquidateBorrow(address borrower, uint repayAmount, address cTokenCollateral) virtual external returns (uint);
+    function mint(uint mintAmount, bool enterMarket) virtual external returns (uint);
+    function borrow(uint borrowAmount) virtual external returns (uint);
 }
 
 interface Stabilizer {

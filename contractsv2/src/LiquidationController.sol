@@ -41,7 +41,14 @@ contract LiquidationController is FlashLoanReceiverBase {
         swapRouter = ISwapRouter(_swapRouter);
 
         poolFee[_bdUSDC] = 500; // USDC-DAI
-        poolFee[_bdETH] = 3000; // ETH-DAI
+        // poolFee[_bdETH] = 3000; // ETH-DAI
+
+        // Approve tokens on contract creation to save gas during liquidations
+        DAI.approve(address(curvePool), type(uint256).max);
+        DAI.approve(address(LENDING_POOL), type(uint256).max);
+        bUSD.approve(address(curvePool), type(uint256).max);
+        bUSD.approve(address(bdUSD), type(uint256).max);
+        wrappedETH.approve(address(swapRouter), type(uint256).max);
     }
 
     // This function is called after the contract has received the flash loan
@@ -54,54 +61,45 @@ contract LiquidationController is FlashLoanReceiverBase {
     ) external override returns(bool) {
         (address[] memory _borrowers, uint256[] memory _repayAmounts, address[] memory _bdCollaterals) = abi.decode(_params, (address[], uint256[], address[]));
 
-        // Approve transfer of DAI to stabilizer
-        DAI.approve(address(curvePool), amounts[0]);
+        // Approve transfer of DAI to curve pool
+        // DAI.approve(address(curvePool), amounts[0]);
 
         // Exchange DAI for bUSD on Curve
         curvePool.exchange_underlying(1, 0, amounts[0], 0);
 
         // Approve bUSD transfers for liquidations
-        bUSD.approve(address(bdUSD), amounts[0]);
+        // bUSD.approve(address(bdUSD), amounts[0]);
 
         // Liquidate the different users
         for (uint i = 0; i < _borrowers.length; i++) {
-            (uint result) = bdUSD.liquidateBorrow(_borrowers[i], _repayAmounts[i], _bdCollaterals[i]);
-
             // If liquidation didn't succeed we need to sell the bUSD again.
             // If the incurred fees are too high we won't be able to repay the Flashloan fee and the transaction will revert
-            if (result != 0) {
-                bUSD.approve(address(curvePool), _repayAmounts[i]);
+            if (bdUSD.liquidateBorrow(_borrowers[i], _repayAmounts[i], _bdCollaterals[i]) != 0) {
+                // bUSD.approve(address(curvePool), _repayAmounts[i]);
                 curvePool.exchange_underlying(0, 1, _repayAmounts[i], 0);
-            }
-        }
-
-        // Redeem and sell all seized Collateral
-        for (uint j = 0; j < _bdCollaterals.length; j++) {
-            bdToken bdCollateral = bdToken(_bdCollaterals[j]);
-            uint collateralBalance = bdCollateral.balanceOf(address(this));
-
-            // If liquidation failed we might not have any collateral to redeem
-            if (collateralBalance == 0 && address(this).balance == 0) {
                 continue;
             }
 
-            bdCollateral.redeem(collateralBalance);
+            bdToken bdCollateral = bdToken(_bdCollaterals[i]);
+
+            bdCollateral.redeem(bdCollateral.balanceOf(address(this)));
             ISwapRouter.ExactInputSingleParams memory params;
+            uint collateralAmount;
 
             // If we are handling eth -> transform to weth before selling
             if (address(this).balance > 0) {
-                uint collateralAmount = address(this).balance;
+                collateralAmount = address(this).balance;
 
                 // ETH to WETH
                 wrappedETH.deposit{value: collateralAmount}();
 
-                wrappedETH.approve(address(swapRouter), collateralAmount);
+                // wrappedETH.approve(address(swapRouter), collateralAmount);
 
                 // Define Swap Params
                 params = ISwapRouter.ExactInputSingleParams({
                     tokenIn: address(wrappedETH),
                     tokenOut: address(DAI),
-                    fee: poolFee[_bdCollaterals[j]],
+                    fee: 3000, // No need to reference poolFee[_bdCollaterals[i]], swap is always ETH->DAI and SLOADs are expensive (361 gas here)
                     recipient: address(this),
                     deadline: block.timestamp,
                     amountIn: collateralAmount,
@@ -113,7 +111,7 @@ contract LiquidationController is FlashLoanReceiverBase {
             else {
                 // Get amount of seized assets
                 address underlyingCollateral = bdCollateral.underlying();
-                uint collateralAmount = ERC20(underlyingCollateral).balanceOf(address(this));
+                collateralAmount = ERC20(underlyingCollateral).balanceOf(address(this));
 
                 ERC20(underlyingCollateral).approve(address(swapRouter), collateralAmount);
 
@@ -121,7 +119,7 @@ contract LiquidationController is FlashLoanReceiverBase {
                 params = ISwapRouter.ExactInputSingleParams({
                     tokenIn: underlyingCollateral,
                     tokenOut: address(DAI),
-                    fee: poolFee[_bdCollaterals[j]],
+                    fee: poolFee[_bdCollaterals[i]],
                     recipient: address(this),
                     deadline: block.timestamp,
                     amountIn: collateralAmount,
@@ -135,7 +133,7 @@ contract LiquidationController is FlashLoanReceiverBase {
 
         // Repay Loan
         uint totalDebt = amounts[0] + premiums[0];
-        DAI.approve(address(LENDING_POOL), totalDebt);
+        // DAI.approve(address(LENDING_POOL), totalDebt);
 
         return true;
     }
