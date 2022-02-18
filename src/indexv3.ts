@@ -47,6 +47,8 @@ import Multicall from './utils/multicall'
 import { Multicall as MC } from 'ethereum-multicall'
 import { decimate, exponentiate } from './utils/numbers'
 import { AbiItem } from 'web3-utils'
+import { ethers, providers, Wallet } from "ethers";
+import { FlashbotsBundleProvider } from "@flashbots/ethers-provider-bundle";
 
 // ABIs
 import erc20Abi from './abi/erc20.json'
@@ -62,9 +64,19 @@ const multicall = new MC({
   tryAggregate: true,
 })
 
-// pull private key from secret file
+// pull private key from secret file (transaction Executioner)
 const secret = fs.readFileSync('.secret').toString().trim()
 web3.eth.accounts.wallet.add(secret)
+
+// Standard json rpc provider
+const provider = new providers.JsonRpcProvider({ url: Constants.infuraURI }, 1)
+
+// `authSigner` is an Ethereum private key that does NOT store funds and is NOT your bot's primary key.
+const authSigner = new ethers.Wallet( Constants.signerKey, provider);
+//get the ethers verison of the Executioner
+const executionSigner = new ethers.Wallet(secret, provider);
+
+const liquidatorContract = new ethers.Contract( Constants.liquidatorContract , liquidatorAbi , executionSigner);
 
 const contracts = {
   comptroller: new web3.eth.Contract(
@@ -82,6 +94,7 @@ const contracts = {
 }
 
 const runLiquidator = async () => {
+
   console.log('------------------------------------------------')
   logger.info('Querying BAO subgraph...')
 
@@ -283,8 +296,7 @@ const runLiquidator = async () => {
               underlyingPricesUSD[largestCollateralPosition.bdTokenAddress] /
                 underlyingPricesUSD[largestBorrowPosition.bdTokenAddress],
             )
-            .decimalPlaces(0)
-
+            .decimalPlaces(0)         
     console.log('---------------------------------------------------------')
     logger.info(`Liquidating account ${chalk.yellow(account)}...`)
     logger.info(
@@ -362,12 +374,10 @@ const runLiquidator = async () => {
     const estTxFeeUSD = new BigNumber(
       underlyingPricesUSD[Constants.bdEthAddress.toLowerCase()],
     ).times(estTxFeeETH)
-    
     // TODO: I'm not sure if this is the correct way to get a rough estimate of profit, need to check on this
     const estimatedProfit = decimate(
-      totalRepay.div(1.01).times(liquidationIncentive.minus(protocolSeizeShare[0])).minus(totalRepay.times(0.009)).minus(totalRepay),
+      ((totalRepay.div(1.01).times(liquidationIncentive.minus(protocolSeizeShare[0]))).minus(totalRepay.times(0.009))).minus(totalRepay),
     )
-    console.log("FlashLoan amount: ", totalRepay.toString())
     // --Debug Logs--
     logger.debug(`Estimated Gas Usage: ${chalk.cyan(gasEstimate)} GWEI`)
     logger.debug(`Gas Price: ${chalk.cyan(web3.utils.fromWei(gasPrice, 'gwei'))} GWEI`)
@@ -382,38 +392,55 @@ const runLiquidator = async () => {
           estTxFeeUSD.toFixed(2),
         )}). Not performing liquidation.`,
       )
-
       return resolve('Profit < gas fee')
     }
 
-    contracts.liquidator.methods
-      .executeLiquidations(
-        addressesToLiquidate,
-        amountsToLiquidate,
-        collateralTokens,
-        totalRepay,
-      )
-      .send({
-        from: Constants.liquidatorWallet,
-        gas: gasEstimate,
-        gasPrice,
-      })
-      .on('transactionHash', (txHash) =>
-        console.log(`Tx Hash: ${chalk.yellowBright(txHash)}`),
-      )
-      .on('receipt', () => {
-        logger.success(
-          `Liquidated ${chalk.yellow(
-            liquidations.length,
-          )} accounts successfully.`,
-        )
-        setTimeout(resolve, 2500) // Wait 2500ms (2.5s) before next loop
-      })
-      .on('error', (error) => {
-        console.log(error)
-        process.exit(1) // exit, for now
-        resolve(error)
-      })
+    //Transfrom BigNumber.js to ethers.BigNumber
+    for (let i = 0; i < amountsToLiquidate.length; i++) {
+      amountsToLiquidate[i] = ethers.BigNumber.from(amountsToLiquidate[i].toFixed())
+    }
+
+    let transactionOptions = {
+      gasPrice: gasPrice,
+      gasLimit: ethers.BigNumber.from("1500000"),
+    }
+    //Create transaction data
+    const transaction = await liquidatorContract.populateTransaction.executeLiquidations(addressesToLiquidate,
+      amountsToLiquidate,
+      collateralTokens,
+      ethers.BigNumber.from(totalRepay.toFixed()),
+      transactionOptions)    
+    
+    // Flashbots provider requires passing in a standard provider
+    const flashbotsProvider = await FlashbotsBundleProvider.create(
+      provider, 
+      authSigner // only for signing request payloads, not transactions
+    )
+
+    const signedBundle = await flashbotsProvider.signBundle([
+      {
+          signer: executionSigner,
+          transaction: transaction
+      }
+    ]);
+    
+    const blockNumber = (await provider.getBlockNumber())
+    //Simulating Flashbots Submission
+    const simulation = await flashbotsProvider.simulate(signedBundle, blockNumber + 2)
+    if ("error" in simulation || simulation.firstRevert !== undefined) {
+      logger.warning(`${chalk.redBright("Simulation Error")}`,)
+      return resolve(simulation);
+    }
+    logger.success(`${chalk.greenBright("Simulation Success")}`,)
+
+    //Final Transaction Submission
+    const bundleSubmission = await flashbotsProvider.sendRawBundle(signedBundle, blockNumber + 2)
+    console.log('bundle submitted, waiting')
+    if ('error' in bundleSubmission) {
+      logger.warning(`${chalk.redBright("Flashbots Submission Error")}`,)
+      process.exit(1) 
+    }
+    setTimeout(resolve, 2500) // Wait 2500ms (2.5s) before next loop
   })
   setTimeout(runLiquidator, 60000)
 }
