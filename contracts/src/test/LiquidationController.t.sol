@@ -1,4 +1,4 @@
-import "ds-test/test.sol";
+import "forge-std/Test.sol";
 import "solmate/tokens/ERC20.sol";
 import "../LiquidationController.sol";
 /* import "solmate/tokens/WETH.sol";
@@ -14,12 +14,6 @@ contract LiquidationControllerTest is DSTest {
 
     function setUp() public {
         controller = new LiquidationController(
-            0x0FaFaFD3C393ead5F5129cFC7e0E12367088c473, // BaoUSD 3Pool
-            0xc0601094C0C88264Ba285fEf0a1b00eF13e79347, // bdUSD
-            0x7945b0A6674b175695e5d1D08aE1e6F13744Abb0, // BaoUSD
-            0xF635fdF9B36b557bD281aa02fdfaeBEc04CD084A, // bdETH
-            0x7749f9f3206A49d4c47b60db05716409dC3A4149, // bdUSDC
-            0xE592427A0AEce92De3Edee1F18E0157C05861564, // UniV3 swap router
             0xB53C1a33016B2DC2fF3653530bfF1848a515c8c5, // Lending Pool Address Provider
             address(this)
         );
@@ -32,20 +26,19 @@ contract LiquidationControllerTest is DSTest {
 
     // Pinned block number where this liquidation is available: 14225453
     function testLiquidation() public {
-        address[] memory borrowers = new address[](1);
-        borrowers[0] = 0xFC69e0a5823E2AfCBEb8a35d33588360F1496a00;
 
-        uint256[] memory repayAmounts = new uint256[](1);
-        repayAmounts[0] = 1000 * 1 ether;
+        address borrower = 0xFC69e0a5823E2AfCBEb8a35d33588360F1496a00;
 
-        address[] memory collaterals = new address[](1);
-        collaterals[0] = 0xF635fdF9B36b557bD281aa02fdfaeBEc04CD084A; // bdETH
+        uint256 repayAmount = 1000 * 1 ether;
+
+        address collateral = 0xF635fdF9B36b557bD281aa02fdfaeBEc04CD084A; // bdETH
 
         controller.executeLiquidations(
-            borrowers,
-            repayAmounts,
-            collaterals,
-            1010 * 1 ether // 1000 *= 1.01
+            borrower,
+            repayAmount,
+            collateral,
+            1010 * 1 ether, // 1000 *= 1.01
+            address(this)
         );
 
         emit log("Profit:");
