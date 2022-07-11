@@ -18,19 +18,16 @@ contract LiquidationController is FlashLoanReceiverBase {
     ERC20 constant USDC = ERC20(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48);
     ICurve constant curvePoolbUSD = ICurve(0x0FaFaFD3C393ead5F5129cFC7e0E12367088c473); // bUSD-3Pool
     ICurve constant curvePoolbSTBL = ICurve(0xA148BD19E26Ff9604f6A608E22BFb7B772D0d1A3); // bSTBL-DAI
-    ISwapRouter immutable swapRouter; // UniV3 Router
+    ISwapRouter constant swapRouter = ISwapRouter(0xE592427A0AEce92De3Edee1F18E0157C05861564); // UniV3 Router
 
     address immutable public owner; // Only used for the retrieve function, no need to use OZ's Ownable or Solmate's Auth
 
     mapping(address => uint24) poolFee;
 
     constructor(
-        address _swapRouter,
         address _lpap
     ) FlashLoanReceiverBase(ILendingPoolAddressesProvider(_lpap)) {
         owner = msg.sender;
-
-        swapRouter = ISwapRouter(_swapRouter);
 
         // Approve tokens on contract creation to save gas during liquidations
         DAI.approve(address(curvePoolbUSD), type(uint256).max);

@@ -40,8 +40,8 @@ interface IFlashLoanReceiver {
 }
 
 abstract contract FlashLoanReceiverBase is IFlashLoanReceiver {
-    ILendingPoolAddressesProvider public immutable override ADDRESSES_PROVIDER;
-    ILendingPool public immutable override LENDING_POOL;
+    ILendingPoolAddressesProvider public override ADDRESSES_PROVIDER;
+    ILendingPool public override LENDING_POOL;
 
     constructor(ILendingPoolAddressesProvider provider) {
         ADDRESSES_PROVIDER = provider;
