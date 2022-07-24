@@ -14,6 +14,8 @@ contract LiquidationController is FlashLoanReceiverBase {
     WETH constant wrappedETH = WETH(payable(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2));
     ERC20 constant DAI = ERC20(0x6B175474E89094C44Da98b954EedeAC495271d0F);
     ERC20 constant bSTBL = ERC20(0x5ee08f40b637417bcC9d2C51B62F4820ec9cF5D8);
+    ERC20 constant bdSTBL = ERC20(0xE0a55c00E6510F4F7df9af78b116B7f8E705cA8F);
+    ERC20 constant bdETH = ERC20(0xF635fdF9B36b557bD281aa02fdfaeBEc04CD084A);
     ERC20 constant bUSD = ERC20(0x7945b0A6674b175695e5d1D08aE1e6F13744Abb0);
     ERC20 constant USDC = ERC20(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48);
     ICurve constant curvePoolbUSD = ICurve(0x0FaFaFD3C393ead5F5129cFC7e0E12367088c473); // bUSD-3Pool
@@ -21,6 +23,8 @@ contract LiquidationController is FlashLoanReceiverBase {
     ISwapRouter constant swapRouter = ISwapRouter(0xE592427A0AEce92De3Edee1F18E0157C05861564); // UniV3 Router
 
     address immutable public owner; // Only used for the retrieve function, no need to use OZ's Ownable or Solmate's Auth
+
+    event log_named_uint(string key, uint val);
 
     mapping(address => uint24) poolFee;
 
@@ -31,7 +35,6 @@ contract LiquidationController is FlashLoanReceiverBase {
 
         // Approve tokens on contract creation to save gas during liquidations
         DAI.approve(address(curvePoolbUSD), type(uint256).max);
-        DAI.approve(address(LENDING_POOL), type(uint256).max);
         bUSD.approve(address(curvePoolbUSD), type(uint256).max);
         bUSD.approve(address(bdUSD), type(uint256).max);
         wrappedETH.approve(address(swapRouter), type(uint256).max);
@@ -48,12 +51,11 @@ contract LiquidationController is FlashLoanReceiverBase {
         bytes calldata _params
     ) external override returns(bool) {
         (address _borrower, uint256 _repayAmount, address _bdCollateral) = abi.decode(_params, (address, uint256, address));
-
         // Exchange DAI for bUSD on Curve
         curvePoolbUSD.exchange_underlying(1, 0, amounts[0], 0);
 
         // If liquidation doesn't succed, we revert
-        require(bdUSD.liquidateBorrow(_borrower, _repayAmount, _bdCollateral) != 0);
+        require(bdUSD.liquidateBorrow(_borrower, _repayAmount, _bdCollateral) == 0);
 
         bdToken bdCollateral = bdToken(_bdCollateral);
 
@@ -62,7 +64,7 @@ contract LiquidationController is FlashLoanReceiverBase {
         uint collateralAmount;
 
         // If we are handling eth -> transform to weth before selling
-        if (address(this).balance > 0) {
+        if (_bdCollateral==address(bdETH)) {
             collateralAmount = address(this).balance;
 
             // ETH to WETH
@@ -82,12 +84,13 @@ contract LiquidationController is FlashLoanReceiverBase {
             // Execute Swap
             swapRouter.exactInputSingle(params);
         }
-        else if (_bdCollateral==address(bSTBL)) {
+        else if (_bdCollateral==address(bdSTBL)) {
             // Get amount of seized assets
             address underlyingCollateral = bdCollateral.underlying();
             collateralAmount = ERC20(underlyingCollateral).balanceOf(address(this));
             //Swap bSTBL for DAI on Curve
-            curvePoolbSTBL.exchange_underlying(1, 0, collateralAmount, 0);
+            bSTBL.approve(address(curvePoolbSTBL), collateralAmount);
+            curvePoolbSTBL.exchange(1, 0, collateralAmount, 0);
         }
         // Swapping USDC for DAI
         else {
@@ -110,7 +113,8 @@ contract LiquidationController is FlashLoanReceiverBase {
             // Execute Swap
             swapRouter.exactInputSingle(params);
         }       
-
+        uint totalDebt = amounts[0] + premiums[0];
+        DAI.approve(address(LENDING_POOL), totalDebt);
         return true;
     }
 
@@ -119,19 +123,18 @@ contract LiquidationController is FlashLoanReceiverBase {
       * @param _borrower The addresses whose borrow we are going to repay (liquidations)
       * @param _repayAmount The number of borrowed assets we want to repay
       * @param _bdCollateral The bdToken address of the collateral we want to claim
-      * @param _totalRepayAmount The total amount of the synth assets that we plan to repay the user debts with
       */
     function executeLiquidations(
         address _borrower,
         uint256 _repayAmount,
         address _bdCollateral,
-        uint256 _totalRepayAmount,
+        uint256 _loan_amount,
         address _receiver
     ) external {
         bytes memory params = abi.encode(_borrower,_repayAmount,_bdCollateral);
 
         uint256[] memory amounts = new uint256[](1);
-        amounts[0] = _totalRepayAmount;
+        amounts[0] = _loan_amount;
 
         address[] memory assets = new address[](1);
         assets[0] = address(DAI);
@@ -139,7 +142,7 @@ contract LiquidationController is FlashLoanReceiverBase {
         // 0 = no debt, 1 = stable, 2 = variable
         uint256[] memory modes = new uint256[](1);
         modes[0] = 0;
-        
+
         LENDING_POOL.flashLoan(address(this), assets, amounts, modes, address(this), params, 0);
 
         // Transfer funds to _receiver (to avoid griefing attack)

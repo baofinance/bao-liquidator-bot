@@ -13,6 +13,7 @@ contract Constants {
 
     ICToken public bdUSD = ICToken(0xc0601094C0C88264Ba285fEf0a1b00eF13e79347);
     ICToken public bdETH = ICToken(0xF635fdF9B36b557bD281aa02fdfaeBEc04CD084A);
+    ICToken public bdSTBL = ICToken(0xE0a55c00E6510F4F7df9af78b116B7f8E705cA8F);
 
     address public bSTBL = 0x5ee08f40b637417bcC9d2C51B62F4820ec9cF5D8;
     address public bUSD = 0x7945b0A6674b175695e5d1D08aE1e6F13744Abb0;
