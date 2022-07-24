@@ -351,9 +351,9 @@ const runLiquidator = async () => {
     const gasPriceEther = web3.utils.fromWei(gasPrice, 'ether')
     const gasEstimate = await contracts.liquidator.methods
       .executeLiquidations(
-        addressesToLiquidate,
-        amountsToLiquidate,
-        collateralTokens,
+        addressesToLiquidate[0],
+        amountsToLiquidate[0],
+        collateralTokens[0],
         totalRepay,
       )
       .estimateGas({ from: Constants.liquidatorWallet, gasPrice })
@@ -385,13 +385,13 @@ const runLiquidator = async () => {
 
       return resolve('Profit < gas fee')
     }
-
     contracts.liquidator.methods
       .executeLiquidations(
         addressesToLiquidate,
         amountsToLiquidate,
         collateralTokens,
         totalRepay,
+        Constants.treasury
       )
       .send({
         from: Constants.liquidatorWallet,
@@ -418,98 +418,5 @@ const runLiquidator = async () => {
   setTimeout(runLiquidator, 60000)
 }
 
-const addCollateralOption = async () => {
-  inquirer
-    .prompt([
-      {
-        type: 'input',
-        name: 'address',
-        message: 'Enter Address of Collateral Token',
-      },
-    ])
-    .then(async ({ address }) => {
-      await new Promise(async (resolve) => {
-        contracts.liquidator.methods
-          .addCollateralOption(address)
-          .send({
-            from: Constants.liquidatorWallet,
-            gas: 1000000,
-            gasPrice: await web3.eth.getGasPrice(),
-          })
-          .on('transactionHash', (txHash) =>
-            console.log(`Tx Hash: ${chalk.yellowBright(txHash)}`),
-          )
-          .on('receipt', () => {
-            logger.success(
-              `Added ${chalk.yellow(address)} as a collateral option.`,
-            )
-            resolve(0)
-          })
-          .on('error', (error) => {
-            console.log(error)
-            process.exit(1) // exit, for now
-            resolve(error)
-          })
-      })
-      mainMenu()
-    })
-}
-
-// Init
-const mainMenu = () => {
-  console.log(chalk.greenBright('🤖 Liquidation Bot Control Panel'))
-  inquirer
-    .prompt([
-      {
-        type: 'list',
-        name: 'direction',
-        message: 'What would you like to do?',
-        choices: [
-          'Start Bot',
-          'Add Collateral Option',
-          'Get Close Factor & Incentive Mantissa',
-          'Exit',
-        ],
-      },
-    ])
-    .then(({ direction }) => {
-      switch (direction) {
-        case 'Start Bot':
-          runLiquidator()
-          break
-        case 'Add Collateral Option':
-          addCollateralOption()
-          break
-        case 'Get Close Factor & Incentive Mantissa':
-          contracts.comptroller.methods
-            .closeFactorMantissa()
-            .call()
-            .then((closeFactor) => {
-              logger.info(`Close Factor: ${decimate(closeFactor)}%`)
-              contracts.comptroller.methods
-                .liquidationIncentiveMantissa()
-                .call()
-                .then((liqIncentive) => {
-                  logger.info(
-                    `Liquidation Incentive: ${decimate(liqIncentive)}`,
-                  )
-                  mainMenu()
-                })
-            })
-          break
-        case 'Exit':
-          process.exit(0)
-          break
-      }
-    })
-    .catch((error) => {
-      if (error.isTtyError) {
-        // Prompt couldn't be rendered in the current environment
-      } else {
-        // Something else went wrong
-      }
-    })
-}
-
-mainMenu()
+runLiquidator()
         
