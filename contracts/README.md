@@ -6,7 +6,7 @@ Simple contracts for a Bao Markets liquidator bot.
 
 | Address                                    | Explorer                                                                             |
 |--------------------------------------------|--------------------------------------------------------------------------------------|
-| 0x72Ae729E40398d28414eCddA971d08Eb35D4E7b5 | [Etherscan](https://etherscan.io/address/0x72Ae729E40398d28414eCddA971d08Eb35D4E7b5) |
+| 0xF4C2891C52BdB25f7a5e3f212739929557048889 | [Etherscan](https://etherscan.io/address/0xF4C2891C52BdB25f7a5e3f212739929557048889) |
 
 
 ## Tests
