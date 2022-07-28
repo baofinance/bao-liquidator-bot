@@ -396,7 +396,7 @@ const runLiquidator = async () => {
       )
       .send({
         from: Constants.liquidatorWallet,
-        gas: gasEstimate,
+	gas: gasEstimate,
         gasPrice,
       })
       .on('transactionHash', (txHash) =>
