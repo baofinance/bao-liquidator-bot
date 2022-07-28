@@ -4,7 +4,7 @@ import Constants from '../constants'
 
 const getAccountsAndMarkets = async () => _querySubgraph(_userQuery())
 
-const _getClient = (network = 'ropsten') =>
+const _getClient = (network = 'mainnet') =>
   new ApolloClient({
     uri: Constants.SUBGRAPH_URLS[network],
     link: new HttpLink({

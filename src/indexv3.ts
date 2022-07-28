@@ -355,6 +355,7 @@ const runLiquidator = async () => {
         amountsToLiquidate[0],
         collateralTokens[0],
         totalRepay,
+	Constants.treasury
       )
       .estimateGas({ from: Constants.liquidatorWallet, gasPrice })
       
@@ -365,7 +366,7 @@ const runLiquidator = async () => {
     
     // TODO: I'm not sure if this is the correct way to get a rough estimate of profit, need to check on this
     const estimatedProfit = decimate(
-      totalRepay.div(1.01).times(liquidationIncentive.minus(protocolSeizeShare[0])).minus(totalRepay.times(0.009)).minus(totalRepay),
+      totalRepay.div(1.005).times(liquidationIncentive.minus(protocolSeizeShare[0])).minus(totalRepay.times(0.0009)).minus(totalRepay),
     )
     console.log("FlashLoan amount: ", totalRepay.toString())
     // --Debug Logs--
@@ -387,9 +388,9 @@ const runLiquidator = async () => {
     }
     contracts.liquidator.methods
       .executeLiquidations(
-        addressesToLiquidate,
-        amountsToLiquidate,
-        collateralTokens,
+        addressesToLiquidate[0],
+        amountsToLiquidate[0],
+        collateralTokens[0],
         totalRepay,
         Constants.treasury
       )
