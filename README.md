@@ -19,8 +19,7 @@ This bot is by no means top-of-the-line and is meant to be used as a reference /
 1) Copy `src/constants.default.ts` to `src/constants.ts` and fill in blank values.
 2) Create a file in the project root called `.secret` and include your liquidator wallet's private key
 3) Run `yarn`
-4) Patch `@apollo` dependency for CLI usage: `(cd node_modules/@apollo && yarn add react)`
-5) Run `yarn start`
+4) Run `ts-node ./src/indexv3.ts`
 
 ## References
 * [BAO HardSynth Contracts](https://github.com/baofinance/HardSynths)
