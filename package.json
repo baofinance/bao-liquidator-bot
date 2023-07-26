@@ -4,14 +4,15 @@
   "description": "Simple liquidation bot for BAO hardsynths",
   "main": "indexv3.js",
   "scripts": {
-    "start": "tsc && node ./dist/src/indexv3.js",
-    "start-no-build": "node ./dist/src/indexv3.js"
+    "start": "ts-node ./src/indexv3.ts",
+    "start-no-build": "node ./src/indexv3.ts"
   },
   "keywords": [],
   "author": "vex",
   "license": "WTFPL",
   "dependencies": {
     "@apollo/client": "^3.4.10",
+    "@types/react": "^18.0.25",
     "bignumber.js": "^9.0.1",
     "chalk": "^4.1.2",
     "cross-fetch": "^3.1.4",
