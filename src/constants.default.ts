@@ -13,6 +13,6 @@ export default {
 
   // Subgraphs
   SUBGRAPH_URLS: {
-    mainnet: 'https://api.thegraph.com/subgraphs/name/baofinance/bao-markets',
+    mainnet: 'https://api.thegraph.com/subgraphs/name/baofinance/baousd-vault-subgraph',
   },
 }
